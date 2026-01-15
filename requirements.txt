@@ -1,11 +1,5 @@
 PyQt6==6.10.2
 PyQt6-Qt6==6.10.1
-PyQt6_sip==13.10.3
 playwright==1.57.0
-playwright-stealth==1.0.4
 pyee==13.0.0
 typing_extensions==4.15.0
-requests==2.32.3
-lxml==4.9.4
-
-#playwright edge需要手动安装

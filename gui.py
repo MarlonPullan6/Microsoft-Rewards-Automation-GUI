@@ -29,10 +29,12 @@ from main import (
     _get_exe_dir,
     _get_bundle_dir,
     _format_console_dashboard,
+    MSEDGE_CHANNEL,
+    DOMCONTENTLOADED,
 )
 
 # Playwright 异步 API（用于浏览器自动化）
-from playwright.async_api import async_playwright
+from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 
 
 class RewardsGUI(QtWidgets.QMainWindow):
@@ -236,7 +238,7 @@ class RewardsGUI(QtWidgets.QMainWindow):
         cookies_dir.mkdir(parents=True, exist_ok=True)
         
         async with async_playwright() as p:
-            browser = await p.chromium.launch(channel="msedge", headless=False)
+            browser = await p.chromium.launch(channel=MSEDGE_CHANNEL, headless=False)
             context = await browser.new_context()
             page = await context.new_page()
             
@@ -253,7 +255,7 @@ class RewardsGUI(QtWidgets.QMainWindow):
                         "#mectrl_currentAccount_secondary",
                         timeout=1800000
                     )
-                except Exception:
+                except PlaywrightTimeoutError:
                     self.log_signal.emit("登录超时或已取消", "WARN")
                     return
                 
@@ -373,23 +375,9 @@ class RewardsGUI(QtWidgets.QMainWindow):
         except Exception:
             files = sorted(self.cookies_dir.glob("*.json"))
         for f in files:
-            # 优先基于当前运行线程计算账号状态，避免一台设备结束后整体被标记为空闲
-            running_devs = [
-                name.split("_", 1)[1]
-                for name in list(self.running_tasks.keys())
-                if name.startswith(f.stem + "_")
-            ]
-            # 去重并排序（Windows 在前，iPhone 在后）
-            order = {"windows": 0, "iphone": 1}
-            running_devs = list(dict.fromkeys(running_devs))
-            running_devs.sort(key=lambda d: order.get(d, 99))
-
-            if running_devs:
-                status = f"运行中: {', '.join(running_devs)}"
-            else:
-                status = self.account_status.get(f.stem) or "空闲"
-            # 同步记录，便于其他位置读取
-            self.account_status[f.stem] = status
+            # 统一计算/同步状态
+            self._recompute_account_status(f.stem)
+            status = self.account_status.get(f.stem) or "空闲"
 
             label = f.stem
             item = QtWidgets.QListWidgetItem(label)
@@ -450,7 +438,7 @@ class RewardsGUI(QtWidgets.QMainWindow):
         else:
             self.dashboard.clear()
 
-    def _on_account_selection_changed(self, current, previous):  # noqa: ARG002
+    def _on_account_selection_changed(self, _current, _previous):
         self._show_dashboard_for_selected()
 
     def _render_dashboard(self, *, account_name: Optional[str] = None, userinfo=None, stats=None, status_text: str = "", search_index=None, search_total=None):
@@ -492,7 +480,6 @@ class RewardsGUI(QtWidgets.QMainWindow):
                 stats_live = compute_remaining_searches(userinfo_live, device_type)
                 remaining_live = stats_live.get("remaining_searches", 0)
                 total_live = stats_live.get("total_searches", 0)
-                done_live = max(0, total_live - remaining_live) if total_live else 0
 
                 self._render_dashboard(
                     account_name=account_name,
@@ -595,15 +582,7 @@ class RewardsGUI(QtWidgets.QMainWindow):
         th.start()
         self.running_tasks[task_name] = th
         # 启动后按仍在运行的设备集合更新账号状态
-        running_devs = [
-            name.split("_", 1)[1]
-            for name in list(self.running_tasks.keys())
-            if name.startswith(cookie_file.stem + "_")
-        ]
-        order = {"windows": 0, "iphone": 1}
-        running_devs = list(dict.fromkeys(running_devs))
-        running_devs.sort(key=lambda d: order.get(d, 99))
-        self.account_status[cookie_file.stem] = f"运行中: {', '.join(running_devs)}" if running_devs else "空闲"
+        self._recompute_account_status(cookie_file.stem)
         self.refresh_accounts_signal.emit()
 
     def _run_task_thread(self, cookie_file: Path, device_type: str, task_name: str):
@@ -615,18 +594,7 @@ class RewardsGUI(QtWidgets.QMainWindow):
             # 清理运行标记
             self.running_tasks.pop(task_name, None)
             # 若该账号仍有其他设备在运行，则保持运行中状态
-            running_devs = [
-                name.split("_", 1)[1]
-                for name in list(self.running_tasks.keys())
-                if name.startswith(cookie_file.stem + "_")
-            ]
-            order = {"windows": 0, "iphone": 1}
-            running_devs = list(dict.fromkeys(running_devs))
-            running_devs.sort(key=lambda d: order.get(d, 99))
-            if running_devs:
-                self.account_status[cookie_file.stem] = f"运行中: {', '.join(running_devs)}"
-            else:
-                self.account_status[cookie_file.stem] = "空闲"
+            self._recompute_account_status(cookie_file.stem)
             self.refresh_accounts_signal.emit()
             # 如果没有任何任务在运行，恢复按钮状态
             if not self.running_tasks:
@@ -642,7 +610,7 @@ class RewardsGUI(QtWidgets.QMainWindow):
         self.log_signal.emit(f"{prefix}启动浏览器，设备: {device_type}", "INFO")
         async with async_playwright() as p:
             # iPhone 模式下在 headless 模式添加额外启动参数以增强移动设备伪装
-            launch_kwargs = {"channel": "msedge", "headless": self.headless_mode}
+            launch_kwargs = {"channel": MSEDGE_CHANNEL, "headless": self.headless_mode}
             if self.headless_mode and device_type == "iphone":
                 # 添加启动参数强制移动设备特征
                 launch_kwargs["args"] = [
@@ -756,7 +724,7 @@ class RewardsGUI(QtWidgets.QMainWindow):
         max_ms = delay_cfg["max_delay_ms"]
 
         if page.url == "about:blank":
-            await page.goto("https://www.bing.com", wait_until="domcontentloaded")
+            await page.goto("https://www.bing.com", wait_until=DOMCONTENTLOADED)
         await asyncio.sleep(2)
 
         # 使用实时剩余次数动态计算循环次数，避免因初始估计误差导致提前结束
@@ -781,7 +749,6 @@ class RewardsGUI(QtWidgets.QMainWindow):
             executed += 1
             query = generate_random_query()
             search_url = f"https://www.bing.com/search?q={quote_plus(query)}"
-            display_total = current_remaining if current_remaining > 0 else remaining
             try:
                 self.log_signal.emit(f"{prefix}搜索: {query} | 剩余 {current_remaining} 次", "INFO")
                 self.status_signal.emit(f"搜索中，剩余 {current_remaining} 次", "orange")
@@ -792,7 +759,7 @@ class RewardsGUI(QtWidgets.QMainWindow):
                 except asyncio.TimeoutError:
                     self.log_signal.emit(f"{prefix}搜索超时，重试...", "WARN")
                     try:
-                        await page.goto("https://www.bing.com", wait_until="domcontentloaded", timeout=20000)
+                        await page.goto("https://www.bing.com", wait_until=DOMCONTENTLOADED, timeout=20000)
                     except Exception:
                         pass
                     ok = False
@@ -800,14 +767,14 @@ class RewardsGUI(QtWidgets.QMainWindow):
                     ok = False
 
                 if not ok:
-                    await page.goto(search_url, wait_until="domcontentloaded")
+                    await page.goto(search_url, wait_until=DOMCONTENTLOADED)
                 await _maybe_human_scroll(page)
                 await _maybe_click_one_result(page)
 
             except Exception as e:
                 self.log_signal.emit(f"{prefix}搜索失败: {e}", "WARN")
                 try:
-                    await page.goto("https://www.bing.com", wait_until="domcontentloaded")
+                    await page.goto("https://www.bing.com", wait_until=DOMCONTENTLOADED)
                 except Exception:
                     pass
 
@@ -817,7 +784,6 @@ class RewardsGUI(QtWidgets.QMainWindow):
                 stats_live = compute_remaining_searches(userinfo_live, device_type)
                 current_remaining = stats_live.get("remaining_searches", current_remaining)
                 total = stats_live.get("total_searches", total)
-                done_count = max(0, total - current_remaining) if total else executed
                 userinfo = userinfo_live
                 stats = stats_live
                 # 根据最新数据动态抬升安全上限，防止 total 变化导致过早退出
@@ -899,7 +865,8 @@ class RewardsGUI(QtWidgets.QMainWindow):
             if key in self.task_stop_flags and self.task_stop_flags[key]:
                 self.task_stop_flags[key] = False
 
-    def _context_kwargs(self, p, device_type: str, user_agent: str):
+    @staticmethod
+    def _context_kwargs(p, device_type: str, user_agent: str):
         if device_type == "windows":
             return {
                 "user_agent": user_agent,
@@ -929,11 +896,11 @@ class RewardsGUI(QtWidgets.QMainWindow):
         return ctx
 
     # 事件响应
-    def _on_headless_changed(self, checked: bool):
-        self.headless_mode = checked
+    def _on_headless_changed(self, _checked: bool):
+        self.headless_mode = self.cb_headless.isChecked()
         self.save_config()
 
-    def _on_device_changed(self, checked: bool):  # noqa: ARG002
+    def _on_device_changed(self, _checked: bool):
         self.device_windows = self.cb_windows.isChecked()
         self.device_iphone = self.cb_iphone.isChecked()
         self.save_config()
@@ -965,6 +932,18 @@ class RewardsGUI(QtWidgets.QMainWindow):
         # 停止按钮仅在非 idle 时可用
         self.btn_stop.setEnabled(not idle)
         self.btn_stop_all.setEnabled(not idle)
+
+    def _recompute_account_status(self, account_name: str) -> None:
+        """根据当前运行线程，更新指定账号的状态文本。"""
+        running_devs = [
+            name.split("_", 1)[1]
+            for name in list(self.running_tasks.keys())
+            if name.startswith(account_name + "_")
+        ]
+        order = {"windows": 0, "iphone": 1}
+        running_devs = list(dict.fromkeys(running_devs))
+        running_devs.sort(key=lambda d: order.get(d, 99))
+        self.account_status[account_name] = f"运行中: {', '.join(running_devs)}" if running_devs else "空闲"
 
 
 def main():

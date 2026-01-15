@@ -9,6 +9,10 @@ from urllib.parse import quote_plus
 
 from playwright.async_api import async_playwright
 
+# 常量：集中管理字符串，避免拼写检查对字符串字面量误报
+MSEDGE_CHANNEL = "msedge"
+DOMCONTENTLOADED = "domcontentloaded"
+
 # 记录程序启动时间，用于展示运行时长
 APP_START_TS = time.time()
 
@@ -108,10 +112,10 @@ async def _maybe_click_one_result(page) -> None:
         await asyncio.sleep(random.uniform(0.2, 0.8))
 
         await link.click(timeout=3000)
-        await page.wait_for_load_state("domcontentloaded", timeout=15000)
+        await page.wait_for_load_state(DOMCONTENTLOADED, timeout=15000)
         await asyncio.sleep(random.uniform(2.0, 6.0))
         try:
-            await page.go_back(wait_until="domcontentloaded", timeout=15000)
+            await page.go_back(wait_until=DOMCONTENTLOADED, timeout=15000)
         except Exception:
             # go_back 不行就不强求
             pass
@@ -263,14 +267,14 @@ async def _perform_bing_search_like_human(page, query: str) -> bool:
     try:
         # 确保在 Bing 上（有时搜索过程中会跳去别的域）
         if "bing.com" not in (page.url or ""):
-            await page.goto("https://www.bing.com", wait_until="domcontentloaded")
+            await page.goto("https://www.bing.com", wait_until=DOMCONTENTLOADED)
 
         await _maybe_accept_bing_dialogs(page)
         await _human_type_into_search_box(page, query)
 
         # userscript 本质上是 form submit / click go；这里用 Enter 提交
         await page.keyboard.press("Enter")
-        await page.wait_for_load_state("domcontentloaded", timeout=20000)
+        await page.wait_for_load_state(DOMCONTENTLOADED, timeout=20000)
         await _maybe_accept_bing_dialogs(page)
         return True
     except Exception:
@@ -862,7 +866,7 @@ async def run_rewards_auto_search(page, context, device_type: str):
 
     # 先确保能打开 Bing（有时直接搜索 URL 会被重定向）
     if page.url == "about:blank":
-        await page.goto("https://www.bing.com", wait_until="domcontentloaded")
+        await page.goto("https://www.bing.com", wait_until=DOMCONTENTLOADED)
 
     status_text = "开始自动搜索（Ctrl+C 可中断）"
     _render_console_dashboard(
@@ -917,7 +921,7 @@ async def run_rewards_auto_search(page, context, device_type: str):
                     first_paint=first_paint,
                 )
                 try:
-                    await page.goto("https://www.bing.com", wait_until="domcontentloaded", timeout=20000)
+                    await page.goto("https://www.bing.com", wait_until=DOMCONTENTLOADED, timeout=20000)
                 except Exception:
                     pass
                 ok = False
@@ -925,7 +929,7 @@ async def run_rewards_auto_search(page, context, device_type: str):
                 ok = False
 
             if not ok:
-                await page.goto(search_url, wait_until="domcontentloaded")
+                await page.goto(search_url, wait_until=DOMCONTENTLOADED)
 
             # 轻量随机交互：滚动/偶尔点开一个结果再返回
             await _maybe_human_scroll(page)
@@ -945,7 +949,7 @@ async def run_rewards_auto_search(page, context, device_type: str):
                 first_paint=first_paint,
             )
             try:
-                await page.goto("https://www.bing.com", wait_until="domcontentloaded")
+                await page.goto("https://www.bing.com", wait_until=DOMCONTENTLOADED)
             except Exception:
                 pass
 
@@ -1132,7 +1136,7 @@ async def login_and_save():
     
     async with async_playwright() as p:
         browser = await p.chromium.launch(
-            channel="msedge",
+            channel=MSEDGE_CHANNEL,
             headless=False
         )
         
@@ -1146,7 +1150,7 @@ async def login_and_save():
             print("\n请在浏览器中登录您的Microsoft账户...")
             print("登录完成后，按回车键保存Cookie...")
             
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, input)
             
             # 获取账户名
@@ -1297,13 +1301,13 @@ async def use_saved_cookie():
         
         try:
             print("\n正在打开 Bing 页面...")
-            await page.goto("https://www.bing.com", wait_until="domcontentloaded")
+            await page.goto("https://www.bing.com", wait_until=DOMCONTENTLOADED)
 
             # 选择 UA 后自动开始（移植自 Microsoft Rewards Dashboard.js）
             await run_rewards_auto_search(page, context, device_type)
 
             print("\n脚本执行结束，按回车键关闭浏览器...")
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, input)
             
         except Exception as e:
