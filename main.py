@@ -122,146 +122,6 @@ async def _maybe_click_one_result(page) -> None:
     except Exception:
         return
 
-async def _inject_mobile_spoofing(context) -> None:
-    """在context级别注入 JavaScript，让站点以为是真正的移动设备。"""
-    try:
-        await context.add_init_script("""
-(() => {
-  // 强制覆盖 navigator.maxTouchPoints（手机有触点，桌面通常是 0）
-  try {
-    Object.defineProperty(navigator, 'maxTouchPoints', {
-      get: () => 5,
-      configurable: true
-    });
-  } catch(e) {}
-
-  // 强制覆盖 navigator.webdriver（反爬虫检查，机器人通常为 true）
-  try {
-    delete Object.getPrototypeOf(navigator).webdriver;
-    Object.defineProperty(navigator, 'webdriver', {
-      get: () => false,
-      configurable: true
-    });
-  } catch(e) {}
-
-  // 覆盖 navigator.platform（移动设备标识）
-  try {
-    Object.defineProperty(navigator, 'platform', {
-      get: () => 'iPhone',
-      configurable: true
-    });
-  } catch(e) {}
-
-  // 覆盖 navigator.vendor
-  try {
-    Object.defineProperty(navigator, 'vendor', {
-      get: () => 'Apple Computer, Inc.',
-      configurable: true
-    });
-  } catch(e) {}
-
-  // 覆盖 navigator.plugins（移动端通常为空）
-  try {
-    Object.defineProperty(navigator, 'plugins', {
-      get: () => [],
-      configurable: true
-    });
-  } catch(e) {}
-
-  // 覆盖 navigator.mimeTypes（移动端通常为空）
-  try {
-    Object.defineProperty(navigator, 'mimeTypes', {
-      get: () => [],
-      configurable: true
-    });
-  } catch(e) {}
-
-  // 添加触摸事件支持
-  if (!window.ontouchstart) {
-    window.ontouchstart = null;
-  }
-  if (!window.ontouchend) {
-    window.ontouchend = null;
-  }
-  if (!window.ontouchmove) {
-    window.ontouchmove = null;
-  }
-  if (!window.ontouchcancel) {
-    window.ontouchcancel = null;
-  }
-
-  // 移动端通常支持 orientation
-  try {
-    Object.defineProperty(window, 'orientation', {
-      get: () => 0,
-      configurable: true
-    });
-  } catch(e) {}
-
-  // 添加 onorientationchange 事件
-  if (!window.onorientationchange) {
-    window.onorientationchange = null;
-  }
-
-  // 覆盖 screen.orientation
-  try {
-    if (window.screen && !window.screen.orientation) {
-      Object.defineProperty(window.screen, 'orientation', {
-        get: () => ({
-          type: 'portrait-primary',
-          angle: 0
-        }),
-        configurable: true
-      });
-    }
-  } catch(e) {}
-
-  // 隐藏自动化特征
-  try {
-    delete navigator.__proto__.webdriver;
-  } catch(e) {}
-
-  // 隐藏 Chrome 对象（移动Safari没有）
-  try {
-    delete window.chrome;
-  } catch(e) {}
-
-  // 覆盖 navigator.connection（移动设备网络信息）
-  try {
-    if (!navigator.connection) {
-      Object.defineProperty(navigator, 'connection', {
-        get: () => ({
-          effectiveType: '4g',
-          rtt: 100,
-          downlink: 10,
-          saveData: false
-        }),
-        configurable: true
-      });
-    }
-  } catch(e) {}
-
-  // 覆盖 navigator.deviceMemory（移动设备内存）
-  try {
-    Object.defineProperty(navigator, 'deviceMemory', {
-      get: () => 4,
-      configurable: true
-    });
-  } catch(e) {}
-
-  // 覆盖 navigator.hardwareConcurrency（CPU核心数）
-  try {
-    Object.defineProperty(navigator, 'hardwareConcurrency', {
-      get: () => 6,
-      configurable: true
-    });
-  } catch(e) {}
-})();
-        """)
-    except Exception:
-        # 注入失败也不影响主流程
-        return
-
 async def _perform_bing_search_like_human(page, query: str) -> bool:
     """对齐 userscript：在搜索框输入并提交，而不是每次直接跳转 search?q=。"""
     try:
@@ -275,7 +135,6 @@ async def _perform_bing_search_like_human(page, query: str) -> bool:
         # userscript 本质上是 form submit / click go；这里用 Enter 提交
         await page.keyboard.press("Enter")
         await page.wait_for_load_state(DOMCONTENTLOADED, timeout=20000)
-        await _maybe_accept_bing_dialogs(page)
         return True
     except Exception:
         return False
@@ -310,38 +169,9 @@ def _sanitize_filename(name: str) -> str:
     return cleaned or "未知账户"
 
 
-# 定义User-Agent池
-MOBILE_USER_AGENTS = [
-    # iPhone - 不同系统版本和Safari版本
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_7_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
-    
-    # iPhone - Edge浏览器
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 EdgiOS/120.0.2210.150 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 EdgiOS/119.0.2151.96 Mobile/15E148 Safari/604.1",
-    
-    # Android - Samsung设备
-    "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 14; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.210 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 13; SM-A536B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.6045.193 Mobile Safari/537.36",
-    
-    # Android - Pixel设备
-    "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 14; Pixel 7a) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 13; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.6045.193 Mobile Safari/537.36",
-    
-    # Android - Edge浏览器
-    "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36 EdgA/120.0.2210.150",
-    "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36 EdgA/119.0.2151.78",
-]
-
 # 定义User-Agent
 USER_AGENTS = {
     "windows": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
-    "iphone": lambda: random.choice(MOBILE_USER_AGENTS)  # 每次随机选择一个移动UA
 }
 
 REWARDS_API_URL = "https://rewards.bing.com/api/getuserinfo?type=1&X-Requested-With=XMLHttpRequest"
@@ -350,9 +180,8 @@ DASHBOARD_REFRESH_SECONDS = 30
 
 SEARCH_CONFIG = {
     "points_per_search": 3,
-    # 不同设备类型的随机等待区间（毫秒）
+    # PC 模式的随机等待区间（毫秒）
     "pc": {"min_delay_ms": 50_000, "max_delay_ms": 100_000},
-    "mobile": {"min_delay_ms": 25_000, "max_delay_ms": 50_000},
 }
 
 SEARCH_KEYWORDS = [
@@ -702,22 +531,11 @@ def _format_console_dashboard(
 
     pc_cur = stats["pc"]["current"]
     pc_max = stats["pc"]["max"]
-    m_cur = stats["mobile"]["current"]
-    m_max = stats["mobile"]["max"]
 
-    today_points = pc_cur + m_cur
-    today_max = (pc_max or 0) + (m_max or 0)
-
-    today_pct = _pct(today_points, today_max)
     pc_pct = _pct(pc_cur, pc_max)
-    m_pct = _pct(m_cur, m_max)
-
     pc_done, pc_total = _search_progress(pc_cur, pc_max)
-    m_done, m_total = _search_progress(m_cur, m_max)
 
-    device_label = stats.get("device_label")
-
-    def _status_line(label: str, done: int, total: int) -> str:
+    def _status_line(done: int, total: int) -> str:
         # 统一展示为“状态: 剩余 N 次”，不显示 (进度) 或其它文案
         remaining_count = max(0, int(total) - int(done))
         return f"状态: 剩余 {remaining_count} 次"
@@ -727,11 +545,8 @@ def _format_console_dashboard(
         "=" * 60,
         f"等级: {level_name}",
         f"总积分: {total_points}",
-        f"今日获取: {today_points} / {today_max}  {_bar(today_pct)} {today_pct:6.1f}%",
-        f"电脑: {pc_cur} / {pc_max}  {_bar(pc_pct)} {pc_pct:6.1f}%",
-        _status_line("电脑", pc_done, pc_total),
-        f"手机: {m_cur} / {m_max}  {_bar(m_pct)} {m_pct:6.1f}%",
-        _status_line("手机", m_done, m_total),
+        f"今日获取: {pc_cur} / {pc_max}  {_bar(pc_pct)} {pc_pct:6.1f}%",
+        _status_line(pc_done, pc_total),
         "=" * 60,
     ]
     return "\n".join(lines)
@@ -1109,23 +924,6 @@ def select_cookie_file():
             return None
 
 
-def select_device_type():
-    """让用户选择设备类型"""
-    print("\n选择设备类型:")
-    print("1. 电脑 (Windows UA)")
-    print("2. 手机 (iPhone UA)")
-    
-    while True:
-        try:
-            choice = input("\n请选择设备类型 (输入序号): ").strip()
-            if choice == "1":
-                return "windows"
-            elif choice == "2":
-                return "iphone"
-            else:
-                print("无效的选择，请重新输入!")
-        except KeyboardInterrupt:
-            return None
 
 
 async def login_and_save():
@@ -1222,22 +1020,15 @@ async def use_saved_cookie():
         print("\n操作已取消")
         return
     
-    # 选择设备类型
-    device_type = select_device_type()
-    if not device_type:
-        print("\n操作已取消")
-        return
-    
     # 加载cookie
     with open(cookie_file, 'r', encoding='utf-8') as f:
         cookies = json.load(f)
     
-    # 获取User-Agent（如果是iphone类型，会随机选择一个）
-    ua_value = USER_AGENTS[device_type]
-    user_agent = ua_value() if callable(ua_value) else ua_value
+    device_type = "windows"
+    user_agent = USER_AGENTS[device_type]
     
     print(f"\n已选择账号: {cookie_file.stem}")
-    print(f"设备类型: {'Windows' if device_type == 'windows' else 'iPhone'}")
+    print(f"设备类型: Windows")
     print(f"User-Agent: {user_agent}")
     
     async with async_playwright() as p:
@@ -1289,10 +1080,6 @@ async def use_saved_cookie():
             context_kwargs["timezone_id"] = "Asia/Shanghai"
 
         context = await browser.new_context(**context_kwargs)
-        
-        # 如果是 iPhone 模式，在context级别注入 JavaScript 伪装（在所有页面生效）
-        if device_type == "iphone":
-            await _inject_mobile_spoofing(context)
         
         # 添加cookies
         await context.add_cookies(cookies)

@@ -24,7 +24,6 @@ from main import (
     _maybe_human_scroll,
     _maybe_click_one_result,
     get_cookie_files,
-    _inject_mobile_spoofing,
     _sanitize_filename,
     _get_exe_dir,
     _get_bundle_dir,
@@ -37,11 +36,174 @@ from main import (
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 
 
+class DashboardWidget(QtWidgets.QFrame):
+    """结构化仪表盘组件，使用卡片式布局显示等级、积分和进度"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+        self.setStyleSheet("""
+            DashboardWidget {
+                background-color: #1a1a1a;
+                border: 1px solid #333;
+                border-radius: 8px;
+            }
+        """)
+        self._build_ui()
+    
+    def _build_ui(self):
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+        
+        # 顶部时间信息卡片
+        time_card = self._create_card()
+        time_layout = QtWidgets.QHBoxLayout(time_card)
+        time_layout.setContentsMargins(10, 8, 10, 8)
+        self.lbl_time = QtWidgets.QLabel("当前时间: --:--:--")
+        self.lbl_time.setStyleSheet("font-size: 12px; color: #aaa;")
+        time_layout.addWidget(self.lbl_time)
+        time_layout.addStretch()
+        layout.addWidget(time_card)
+        
+        # 账户信息卡片
+        account_card = self._create_card()
+        account_layout = QtWidgets.QGridLayout(account_card)
+        account_layout.setContentsMargins(10, 10, 10, 10)
+        account_layout.setSpacing(8)
+        
+        # 等级
+        lbl_level_title = QtWidgets.QLabel("等级:")
+        lbl_level_title.setStyleSheet("font-weight: bold; color: #e0e0e0;")
+        self.lbl_level = QtWidgets.QLabel("--")
+        self.lbl_level.setStyleSheet("font-size: 14px; color: #1a73e8;")
+        
+        # 总积分
+        lbl_points_title = QtWidgets.QLabel("总积分:")
+        lbl_points_title.setStyleSheet("font-weight: bold; color: #e0e0e0;")
+        self.lbl_points = QtWidgets.QLabel("--")
+        self.lbl_points.setStyleSheet("font-size: 16px; font-weight: bold; color: #34a853;")
+        
+        account_layout.addWidget(lbl_level_title, 0, 0)
+        account_layout.addWidget(self.lbl_level, 0, 1)
+        account_layout.addWidget(lbl_points_title, 0, 2)
+        account_layout.addWidget(self.lbl_points, 0, 3)
+        account_layout.setColumnStretch(1, 1)
+        account_layout.setColumnStretch(3, 1)
+        layout.addWidget(account_card)
+        
+        # 今日进度卡片
+        progress_card = self._create_card()
+        progress_layout = QtWidgets.QVBoxLayout(progress_card)
+        progress_layout.setContentsMargins(10, 10, 10, 10)
+        progress_layout.setSpacing(8)
+        
+        # 今日获取标题
+        today_header = QtWidgets.QHBoxLayout()
+        lbl_today_title = QtWidgets.QLabel("今日获取")
+        lbl_today_title.setStyleSheet("font-weight: bold; font-size: 13px; color: #e0e0e0;")
+        self.lbl_today_points = QtWidgets.QLabel("-- / --")
+        self.lbl_today_points.setStyleSheet("font-size: 13px; color: #aaa;")
+        today_header.addWidget(lbl_today_title)
+        today_header.addStretch()
+        today_header.addWidget(self.lbl_today_points)
+        progress_layout.addLayout(today_header)
+        
+        # 今日进度条
+        self.progress_today = QtWidgets.QProgressBar()
+        self.progress_today.setMinimum(0)
+        self.progress_today.setMaximum(100)
+        self.progress_today.setValue(0)
+        self.progress_today.setTextVisible(True)
+        self.progress_today.setStyleSheet("""
+            QProgressBar {
+                border: 1px solid #444;
+                border-radius: 5px;
+                background-color: #3d3d3d;
+                height: 20px;
+                text-align: center;
+                color: #e0e0e0;
+            }
+            QProgressBar::chunk {
+                background-color: #4285f4;
+                border-radius: 4px;
+            }
+        """)
+        progress_layout.addWidget(self.progress_today)
+        
+        layout.addWidget(progress_card)
+        
+        # 状态卡片
+        status_card = self._create_card()
+        status_layout = QtWidgets.QHBoxLayout(status_card)
+        status_layout.setContentsMargins(10, 8, 10, 8)
+        lbl_status_title = QtWidgets.QLabel("状态:")
+        lbl_status_title.setStyleSheet("font-weight: bold; color: #e0e0e0;")
+        self.lbl_status = QtWidgets.QLabel("等待中...")
+        self.lbl_status.setStyleSheet("font-size: 13px; color: #1a73e8;")
+        status_layout.addWidget(lbl_status_title)
+        status_layout.addWidget(self.lbl_status, 1)
+        layout.addWidget(status_card)
+        
+        layout.addStretch()
+    
+    def _create_card(self) -> QtWidgets.QFrame:
+        """创建一个卡片样式的容器"""
+        card = QtWidgets.QFrame()
+        card.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+        card.setStyleSheet("""
+            QFrame {
+                background-color: #2d2d2d;
+                border: 1px solid #404040;
+                border-radius: 6px;
+            }
+        """)
+        return card
+    
+    def update_data(self, data: dict):
+        """更新仪表盘显示数据"""
+        if not data:
+            self.clear()
+            return
+        
+        # 时间信息
+        self.lbl_time.setText(f"当前时间: {data.get('time', '--:--:--')}")
+        
+        # 账户信息
+        self.lbl_level.setText(data.get('level', '--'))
+        self.lbl_points.setText(str(data.get('total_points', '--')))
+        
+        # 今日进度
+        pc_cur = data.get('pc_current', 0)
+        pc_max = data.get('pc_max', 0)
+        today_cur = pc_cur
+        today_max = pc_max
+        
+        self.lbl_today_points.setText(f"{today_cur} / {today_max}")
+        today_pct = int((today_cur / today_max * 100) if today_max > 0 else 0)
+        self.progress_today.setValue(today_pct)
+        self.progress_today.setFormat(f"{today_pct}%")
+        
+        # 状态
+        status_text = data.get('status', '等待中...')
+        self.lbl_status.setText(status_text)
+    
+    def clear(self):
+        """清空仪表盘"""
+        self.lbl_time.setText("当前时间: --:--:--")
+        self.lbl_level.setText("--")
+        self.lbl_points.setText("--")
+        self.lbl_today_points.setText("-- / --")
+        self.progress_today.setValue(0)
+        self.progress_today.setFormat("0%")
+        self.lbl_status.setText("等待中...")
+
+
 class RewardsGUI(QtWidgets.QMainWindow):
     # 跨线程 UI 更新信号
     log_signal = QtCore.pyqtSignal(str, str)           # (message, level)
     status_signal = QtCore.pyqtSignal(str, str)        # (text, color)
-    dashboard_signal = QtCore.pyqtSignal(str, object)  # (dashboard text, account_name)
+    dashboard_signal = QtCore.pyqtSignal(dict, object)  # (dashboard data dict, account_name)
     refresh_accounts_signal = QtCore.pyqtSignal()      # 刷新账号列表
 
 
@@ -68,16 +230,14 @@ class RewardsGUI(QtWidgets.QMainWindow):
         self.running_tasks: Dict[str, threading.Thread] = {}
         self.task_stop_flags: Dict[str, bool] = {}
         self.account_status: Dict[str, str] = {}
-        # 各账号对应的最新仪表盘文本
-        self.dashboard_texts: Dict[str, str] = {}
+        # 各账号对应的最新仪表盘数据
+        self.dashboard_texts: Dict[str, dict] = {}
 
         # 配置与设备选择
         self.config_path = Path("Assets/config.json")
         self.cookies_dir = Path("Assets/cookies")
         # old GUI 默认非无头运行，这里与旧版保持一致
         self.headless_mode = False
-        self.device_windows = True
-        self.device_iphone = False
 
         # 选中账号
         self.selected_cookie: Optional[Path] = None
@@ -105,13 +265,7 @@ class RewardsGUI(QtWidgets.QMainWindow):
         self.cb_headless = QtWidgets.QCheckBox("后台模式")
         # 默认关闭无头模式，与旧版保持一致；加载配置后会覆盖
         self.cb_headless.setChecked(False)
-        self.cb_windows = QtWidgets.QCheckBox("Windows")
-        self.cb_windows.setChecked(True)
-        self.cb_iphone = QtWidgets.QCheckBox("iPhone")
-        self.cb_iphone.setChecked(False)
         opts.addWidget(self.cb_headless)
-        opts.addWidget(self.cb_windows)
-        opts.addWidget(self.cb_iphone)
         opts.addStretch(1)
 
         # 按钮区
@@ -155,12 +309,9 @@ class RewardsGUI(QtWidgets.QMainWindow):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(6)
 
-        self.dashboard = QtWidgets.QTextEdit()
-        self.dashboard.setReadOnly(True)
-        self.dashboard.setMinimumHeight(160)
-        # 仪表盘背景不可选中：禁用文本交互与焦点
-        self.dashboard.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.NoTextInteraction)
-        self.dashboard.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
+        # 使用结构化仪表盘组件替代 QTextEdit
+        self.dashboard = DashboardWidget()
+        self.dashboard.setMinimumHeight(280)
         self.log_view = QtWidgets.QTextEdit()
         self.log_view.setReadOnly(True)
         self.btn_clear_log = QtWidgets.QPushButton("清空日志")
@@ -193,13 +344,11 @@ class RewardsGUI(QtWidgets.QMainWindow):
         # 自定义信号
         self.log_signal.connect(self.log)
         self.status_signal.connect(self.update_status)
-        self.dashboard_signal.connect(self._update_dashboard_text)
+        self.dashboard_signal.connect(self._update_dashboard_data)
         self.refresh_accounts_signal.connect(self.refresh_accounts)
         
         # UI 控件事件
         self.cb_headless.toggled.connect(self._on_headless_changed)
-        self.cb_windows.toggled.connect(self._on_device_changed)
-        self.cb_iphone.toggled.connect(self._on_device_changed)
         self.btn_refresh.clicked.connect(self.refresh_accounts)
         self.btn_add_account.clicked.connect(self.add_account)
         self.btn_delete_account.clicked.connect(self.delete_account)
@@ -344,11 +493,7 @@ class RewardsGUI(QtWidgets.QMainWindow):
             if self.config_path.exists():
                 cfg = json.loads(self.config_path.read_text(encoding="utf-8"))
                 self.headless_mode = bool(cfg.get("headless", True))
-                self.device_windows = bool(cfg.get("device_windows", True))
-                self.device_iphone = bool(cfg.get("device_iphone", False))
                 self.cb_headless.setChecked(self.headless_mode)
-                self.cb_windows.setChecked(self.device_windows)
-                self.cb_iphone.setChecked(self.device_iphone)
         except Exception as e:
             self.log_signal.emit(f"读取配置失败: {e}", "ERROR")
 
@@ -357,8 +502,6 @@ class RewardsGUI(QtWidgets.QMainWindow):
             self.config_path.parent.mkdir(parents=True, exist_ok=True)
             cfg = {
                 "headless": self.headless_mode,
-                "device_windows": self.device_windows,
-                "device_iphone": self.device_iphone,
             }
             self.config_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception as e:
@@ -419,22 +562,22 @@ class RewardsGUI(QtWidgets.QMainWindow):
         item = self.accounts_list.currentItem()
         return item.text() if item else None
 
-    def _update_dashboard_text(self, text: str, account_name: Optional[str] = None):
-        # 记录每个账号对应的仪表盘文本
+    def _update_dashboard_data(self, data: dict, account_name: Optional[str] = None):
+        # 记录每个账号对应的仪表盘数据
         if account_name:
-            self.dashboard_texts[account_name] = text
+            self.dashboard_texts[account_name] = data
         current = self._current_selected_account()
         if account_name is None or account_name == current:
-            self.dashboard.setPlainText(text)
+            self.dashboard.update_data(data)
 
     def _show_dashboard_for_selected(self):
         name = self._current_selected_account()
         if not name:
             self.dashboard.clear()
             return
-        text = self.dashboard_texts.get(name)
-        if text:
-            self.dashboard.setPlainText(text)
+        data = self.dashboard_texts.get(name)
+        if data:
+            self.dashboard.update_data(data)
         else:
             self.dashboard.clear()
 
@@ -442,33 +585,36 @@ class RewardsGUI(QtWidgets.QMainWindow):
         self._show_dashboard_for_selected()
 
     def _render_dashboard(self, *, account_name: Optional[str] = None, userinfo=None, stats=None, status_text: str = "", search_index=None, search_total=None):
+        """构建并发送结构化仪表盘数据"""
+        import time as _time
+        
         # 若未能识别 firstName，使用 account_name 作为替代显示
         safe_userinfo = dict(userinfo or {})
         if account_name and not safe_userinfo.get("firstName"):
             safe_userinfo["firstName"] = account_name
 
-        try:
-            text = _format_console_dashboard(
-                userinfo=safe_userinfo if safe_userinfo else None,
-                stats=stats,
-                status_text=status_text,
-                search_index=search_index,
-                search_total=search_total,
-            )
-        except Exception:
-            # 回退到本地简单格式
-            lines = []
-            if safe_userinfo:
-                lines.append(f"账户: {safe_userinfo.get('firstName','')}  积分: {safe_userinfo.get('availablePoints','-')}")
-            if stats:
-                lines.append(f"设备: {stats.get('device_label','-')}  当前/最大: {stats.get('current_points','-')} / {stats.get('max_points','-')}")
-                lines.append(f"剩余搜索: {stats.get('remaining_searches','-')} / {stats.get('total_searches','-')}")
-            if status_text:
-                lines.append(f"状态: {status_text}")
-            # 统一状态仅展示剩余次数，移除进度数字
-            text = "\n".join(lines)
+        # 构建结构化数据
+        data = {
+            "time": _time.strftime("%H:%M:%S"),
+            "level": "--",
+            "total_points": 0,
+            "pc_current": 0,
+            "pc_max": 0,
+            "status": status_text or "等待中...",
+        }
+        
+        if safe_userinfo:
+            dashboard_info = safe_userinfo.get("dashboard") or safe_userinfo
+            user_status = (dashboard_info or {}).get("userStatus") or {}
+            level_info = user_status.get("levelInfo") or {}
+            data["level"] = level_info.get("activeLevel") or level_info.get("level") or "未知"
+            data["total_points"] = int(user_status.get("availablePoints") or 0)
+        
+        if stats:
+            data["pc_current"] = stats.get("pc", {}).get("current", 0)
+            data["pc_max"] = stats.get("pc", {}).get("max", 0)
 
-        self.dashboard_signal.emit(text, account_name)
+        self.dashboard_signal.emit(data, account_name)
 
     async def _periodic_dashboard_refresh(self, context, device_type: str, account_name: Optional[str], task_name: Optional[str], interval: float = 0.1):
         """周期性拉取真实 Rewards 数据并刷新仪表盘，仅影响显示，不改变任务执行速度。"""
@@ -497,56 +643,46 @@ class RewardsGUI(QtWidgets.QMainWindow):
     # endregion
 
     # region 任务控制
-    def _selected_devices(self) -> list[str]:
-        devices: list[str] = []
-        if self.cb_windows.isChecked():
-            devices.append("windows")
-        if self.cb_iphone.isChecked():
-            devices.append("iphone")
-        return devices
-
     def start_task(self):
         item = self.accounts_list.currentItem()
         if not item:
             self.log_signal.emit("请先选择一个账号（cookies 文件）", "WARN")
             return
         cookie_path = Path(item.data(QtCore.Qt.ItemDataRole.UserRole))
-        self.selected_cookie = cookie_path
-        devices = self._selected_devices()
-        if not devices:
-            self.log_signal.emit("请至少选择一个设备（Windows 或 iPhone）", "WARN")
+        device_type = "windows"
+        task_name = f"{cookie_path.stem}_{device_type}"
+        
+        # 检查该账号是否已在运行
+        if task_name in self.running_tasks:
+            self.log_signal.emit(f"账号 {cookie_path.stem} 已在运行中", "WARN")
             return
+        
+        self.selected_cookie = cookie_path
         # 重置该账号的停止标记，避免上一次停止后遗留的 True 影响本次启动
         self._reset_stop_flags_for_account(cookie_path.stem)
         self.is_running = True
         # 启动前清除全局停止标志，并更新按钮状态
         self.task_stop_flags.pop("__global", None)
         self._set_buttons_enabled(idle=False)
-        for dev in devices:
-            task_name = f"{cookie_path.stem}_{dev}"
-            self.task_stop_flags[task_name] = False
-            self._launch_single(cookie_path, dev, task_name)
+        self.task_stop_flags[task_name] = False
+        self._launch_single(cookie_path, device_type, task_name)
         self.update_status("任务已启动", "green")
 
     def start_batch_tasks(self):
-        devices = self._selected_devices()
-        if not devices:
-            self.log_signal.emit("请至少选择一个设备（Windows 或 iPhone）", "WARN")
-            return
         files = [Path(self.accounts_list.item(i).data(QtCore.Qt.ItemDataRole.UserRole)) for i in range(self.accounts_list.count())]
         if not files:
             self.log_signal.emit("未找到任何账号 cookies", "WARN")
             return
+        device_type = "windows"
         self.is_running = True
         self.task_stop_flags.pop("__global", None)
         self._set_buttons_enabled(idle=False)
         for f in files:
             # 批量模式下也先重置账号级停止标记，防止历史 stop 影响
             self._reset_stop_flags_for_account(f.stem)
-            for dev in devices:
-                task_name = f"{f.stem}_{dev}"
-                self.task_stop_flags[task_name] = False
-                self._launch_single(f, dev, task_name)
+            task_name = f"{f.stem}_{device_type}"
+            self.task_stop_flags[task_name] = False
+            self._launch_single(f, device_type, task_name)
         self.update_status("批量任务已启动", "green")
 
     def stop_task(self):
@@ -604,30 +740,14 @@ class RewardsGUI(QtWidgets.QMainWindow):
 
     async def _execute_single_account(self, cookie_file: Path, device_type: str, task_name: str):
         prefix = f"[{cookie_file.stem}] "
-        # 与 main.USER_AGENTS 对齐（iphone 为可调用的随机 UA）
         ua_value = USER_AGENTS[device_type]
         user_agent = ua_value() if callable(ua_value) else ua_value
         self.log_signal.emit(f"{prefix}启动浏览器，设备: {device_type}", "INFO")
         async with async_playwright() as p:
-            # iPhone 模式下在 headless 模式添加额外启动参数以增强移动设备伪装
             launch_kwargs = {"channel": MSEDGE_CHANNEL, "headless": self.headless_mode}
-            if self.headless_mode and device_type == "iphone":
-                # 添加启动参数强制移动设备特征
-                launch_kwargs["args"] = [
-                    "--disable-blink-features=AutomationControlled",  # 隐藏自动化特征
-                    "--disable-features=IsolateOrigins,site-per-process",  # 减少检测
-                    "--user-agent=" + user_agent,  # 在启动时就设置 UA
-                ]
-                self.log_signal.emit(f"{prefix}后台模式下使用增强型移动设备伪装", "INFO")
             browser = await p.chromium.launch(**launch_kwargs)
             ctx_kwargs = self._context_kwargs(p, device_type, user_agent)
-            # 创建上下文后再注入移动伪装 & 添加 cookies（与 main.py 对齐）
             context = await browser.new_context(**ctx_kwargs)
-            if device_type == "iphone":
-                try:
-                    await _inject_mobile_spoofing(context)
-                except Exception:
-                    pass
             # 加载 cookie JSON 并注入
             try:
                 cookies = json.loads(Path(cookie_file).read_text(encoding="utf-8"))
@@ -636,24 +756,6 @@ class RewardsGUI(QtWidgets.QMainWindow):
             except Exception:
                 pass
             page = await context.new_page()
-            
-            # iPhone 模式下在页面级别也注入伪装脚本（双重保险）
-            if device_type == "iphone":
-                try:
-                    await page.add_init_script("""
-                        // 页面级别的移动设备伪装（补充 context 级别的注入）
-                        Object.defineProperty(navigator, 'maxTouchPoints', {get: () => 5});
-                        Object.defineProperty(navigator, 'platform', {get: () => 'iPhone'});
-                        Object.defineProperty(navigator, 'vendor', {get: () => 'Apple Computer, Inc.'});
-                    """)
-                    # 验证设备特征（用于诊断）
-                    await page.goto("about:blank")
-                    ua_check = await page.evaluate("navigator.userAgent")
-                    platform_check = await page.evaluate("navigator.platform")
-                    touch_check = await page.evaluate("navigator.maxTouchPoints")
-                    self.log_signal.emit(f"{prefix}设备验证 - UA包含iPhone: {'iPhone' in ua_check}, Platform: {platform_check}, 触点: {touch_check}", "INFO")
-                except Exception as e:
-                    self.log_signal.emit(f"{prefix}页面级伪装警告: {e}", "WARN")
             
             try:
                 await self._run_rewards_search_gui(page, context, device_type, cookie_file.stem, task_name)
@@ -853,56 +955,30 @@ class RewardsGUI(QtWidgets.QMainWindow):
             return True
         if account_name and self.task_stop_flags.get(f"{account_name}_windows"):
             return True
-        if account_name and self.task_stop_flags.get(f"{account_name}_iphone"):
-            return True
         if self.task_stop_flags.get("__global"):
             return True
         return False
 
     def _reset_stop_flags_for_account(self, account_name: str):
         """启动任务前重置该账号的停止标记，避免上次停止后直接终止本次任务。"""
-        for key in (f"{account_name}_windows", f"{account_name}_iphone"):
-            if key in self.task_stop_flags and self.task_stop_flags[key]:
-                self.task_stop_flags[key] = False
+        key = f"{account_name}_windows"
+        if key in self.task_stop_flags and self.task_stop_flags[key]:
+            self.task_stop_flags[key] = False
 
     @staticmethod
     def _context_kwargs(p, device_type: str, user_agent: str):
-        if device_type == "windows":
-            return {
-                "user_agent": user_agent,
-                "viewport": {"width": 1920, "height": 1080},
-                "screen": {"width": 1920, "height": 1080},
-                "locale": "zh-CN",
-                # 与旧版体验一致，设置系统时区
-                "timezone_id": "Asia/Shanghai",
-            }
-        # iPhone 模拟
-        device_profile = None
-        for name in ["iPhone 15", "iPhone 14", "iPhone 13", "iPhone 12"]:
-            try:
-                device_profile = p.devices[name]
-                break
-            except Exception:
-                continue
-        ctx = dict(device_profile or {})
-        ctx["user_agent"] = user_agent
-        ctx.setdefault("viewport", {"width": 390, "height": 844})
-        ctx.setdefault("screen", {"width": 390, "height": 844})
-        ctx["is_mobile"] = True
-        ctx["has_touch"] = True
-        ctx["device_scale_factor"] = 3
-        ctx["locale"] = "zh-CN"
-        ctx["timezone_id"] = "Asia/Shanghai"
-        return ctx
+        return {
+            "user_agent": user_agent,
+            "viewport": {"width": 1920, "height": 1080},
+            "screen": {"width": 1920, "height": 1080},
+            "locale": "zh-CN",
+            # 与旧版体验一致，设置系统时区
+            "timezone_id": "Asia/Shanghai",
+        }
 
     # 事件响应
     def _on_headless_changed(self, _checked: bool):
         self.headless_mode = self.cb_headless.isChecked()
-        self.save_config()
-
-    def _on_device_changed(self, _checked: bool):
-        self.device_windows = self.cb_windows.isChecked()
-        self.device_iphone = self.cb_iphone.isChecked()
         self.save_config()
 
     # Qt 生命周期
@@ -924,11 +1000,11 @@ class RewardsGUI(QtWidgets.QMainWindow):
     # 统一控制按钮状态，贴近旧版 GUI 的交互逻辑
     def _set_buttons_enabled(self, *, idle: bool):
         # idle=True 表示没有任务在运行
-        self.btn_refresh.setEnabled(idle)
-        self.btn_add_account.setEnabled(idle)
-        self.btn_delete_account.setEnabled(idle)
-        self.btn_start.setEnabled(idle)
-        self.btn_batch.setEnabled(idle)
+        self.btn_refresh.setEnabled(True)  # 刷新账号始终可用
+        self.btn_add_account.setEnabled(True)  # 添加账号始终可用（运行时也可添加）
+        self.btn_delete_account.setEnabled(idle)  # 删除账号仅空闲时可用
+        self.btn_start.setEnabled(True)  # 开始按钮始终可用（可运行其他账号）
+        self.btn_batch.setEnabled(idle)  # 批量开始仅空闲时可用
         # 停止按钮仅在非 idle 时可用
         self.btn_stop.setEnabled(not idle)
         self.btn_stop_all.setEnabled(not idle)

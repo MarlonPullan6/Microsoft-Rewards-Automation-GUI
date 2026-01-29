@@ -32,6 +32,7 @@
     <Folder Include="Assets\" />
   </ItemGroup>
   <ItemGroup>
+    <Content Include="API.json" />
     <Content Include="Assets\app.ico" />
     <Content Include="Assets\ico.png" />
     <Content Include="LICENSE.txt" />
