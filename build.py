@@ -22,7 +22,8 @@ def clean_build_dirs():
             shutil.rmtree(dir_path)
     
     # 清理 .spec 文件
-    spec_file = root / f"{root.name}.spec"
+    # spec_file = root / f"{root.name}.spec"
+    spec_file = root / "MicrosoftRewardsAutomation.spec"
     if spec_file.exists():
         print(f"删除文件: {spec_file}")
         spec_file.unlink()
